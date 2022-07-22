@@ -116,6 +116,10 @@ class BeamSearch(Search):
     ):
         bsz, beam_size, vocab_size = lprobs.size()
 
+
+        print("="*10)
+        print("Step", step)
+
         if step == 0:
             # at the first step all hypotheses are equally likely, so use
             # only the first beam
