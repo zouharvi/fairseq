@@ -149,10 +149,13 @@ class LexicallyMaskedBeamSearch(Search):
     def __init__(self, tgt_dict, lexical_allowmask):
         super().__init__(tgt_dict)
         self.constraint_states = None
-        self.lexical_allowmask = [
+        lexical_allowmask = [
             "-".join([f"{x:0>9}" for x in allowmask])
             for allowmask in lexical_allowmask
         ]
+        # this is non-ideal because we're disallowing overlapping matches but much much faster
+        # TODO: find a hack around this
+        self.lexical_allowmask_regex = "(" + "|".join(lexical_allowmask) + ")"
 
     @torch.jit.export
     def step(
@@ -165,30 +168,28 @@ class LexicallyMaskedBeamSearch(Search):
     ):
         bsz, beam_size, vocab_size = lprobs.size()
 
-        print("LBeamSearch step", step)
-        print(lprobs.shape, prev_output_tokens.shape, scores.shape)
+        # print("LBeamSearch step", step)
+        # print(lprobs.shape, prev_output_tokens.shape, scores.shape)
 
         length = prev_output_tokens.shape[1]
 
-        # TODO: prune every i-th step
-        if (step % 5 == 0) and step > 5:
+        # TODO: prune every i-th step and not at the beginning
+        if (step % 6 == 0) and step > 5:
             # TODO: maybe this should happen at the end?
-            # TODO: be much smarter about speed here
+            # TODO: Be much smarter about speed here. If something has already been covered, it will remain that way also in the future.
             for beam_tokens_i, beam_tokens in enumerate(prev_output_tokens):
                 coverage = [False] * beam_tokens.shape[0]
                 beam_tokens_str = "-".join(f"{x:0>9}" for x in beam_tokens)
                 # print(beam_tokens_str)
-                for single_allowmask in self.lexical_allowmask:
-                    # print("looking at", single_allowmask)
-                    indices_object = re.finditer(pattern=single_allowmask, string=beam_tokens_str)
-                    indices = [(index.start(), index.end()) for index in indices_object]
-                    for index_l, index_r in indices:
-                        # print(index_l//10, (index_r+1)//10)
-                        for i in range(index_l//10, (index_r+1)//10):
-                            coverage[i] = True
+                # print("looking at", single_allowmask)
+                indices_object = re.finditer(pattern=self.lexical_allowmask_regex, string=beam_tokens_str)
+                indices = [(index.start(), index.end()) for index in indices_object]
+                for index_l, index_r in indices:
+                    for i in range(index_l//10, (index_r+1)//10):
+                        coverage[i] = True
                 # TODO: change constant
-                # TODO: batch
-                scores[0][beam_tokens_i][-1] -= (len(coverage)- sum(coverage))*10
+                # TODO: handle batch
+                scores[0][beam_tokens_i][-1] -= (len(coverage)- sum(coverage))*5
 
         if step == 0:
             # at the first step all hypotheses are equally likely, so use
