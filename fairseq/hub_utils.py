@@ -141,7 +141,15 @@ class GeneratorHubInterface(nn.Module):
         if isinstance(sentences, str):
             return self.sample([sentences], beam=beam, verbose=verbose, **kwargs)[0]
         tokenized_sentences = [self.encode(sentence) for sentence in sentences]
-        batched_hypos = self.generate(tokenized_sentences, beam, verbose, **kwargs)
+        # remove the trailing 2 token eos id but add it separatedly
+        lexical_allowmask_tokenized = [
+            self.encode(mask)[:-1] for mask in kwargs.pop("lexical_mask", {})
+        ] + [self.encode("")]
+        batched_hypos = self.generate(
+            tokenized_sentences, beam, verbose,
+            lexical_allowmask=lexical_allowmask_tokenized,
+            **kwargs
+        )
         return [self.decode(hypos[0]["tokens"]) for hypos in batched_hypos]
 
     def score(
@@ -172,6 +180,7 @@ class GeneratorHubInterface(nn.Module):
         tokenized_sentences: List[torch.LongTensor],
         beam: int = 5,
         verbose: bool = False,
+        lexical_allowmask={},
         skip_invalid_size_inputs=False,
         inference_step_args=None,
         prefix_allowed_tokens_fn=None,
@@ -182,6 +191,7 @@ class GeneratorHubInterface(nn.Module):
                 tokenized_sentences.unsqueeze(0), beam=beam, verbose=verbose, **kwargs
             )[0]
 
+        print("- HUBUTILS GENERATE")
         # build generator using current args as well as any kwargs
         gen_args = copy.deepcopy(self.cfg.generation)
         with open_dict(gen_args):
@@ -192,6 +202,7 @@ class GeneratorHubInterface(nn.Module):
             self.models,
             gen_args,
             prefix_allowed_tokens_fn=prefix_allowed_tokens_fn,
+            lexical_allowmask=lexical_allowmask,
         )
 
         inference_step_args = inference_step_args or {}

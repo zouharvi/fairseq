@@ -14,6 +14,7 @@ from fairseq.token_generation_constraints import (
     UnorderedConstraintState,
 )
 from torch import Tensor
+import re
 
 
 class Search(nn.Module):
@@ -115,6 +116,79 @@ class BeamSearch(Search):
         original_batch_idxs: Optional[Tensor] = None,
     ):
         bsz, beam_size, vocab_size = lprobs.size()
+
+        if step == 0:
+            # at the first step all hypotheses are equally likely, so use
+            # only the first beam
+            lprobs = lprobs[:, ::beam_size, :].contiguous()
+        else:
+            # make probs contain cumulative scores for each hypothesis
+            assert scores is not None
+            lprobs = lprobs + scores[:, :, step - 1].unsqueeze(-1)
+
+        top_prediction = torch.topk(
+            lprobs.view(bsz, -1),
+            k=min(
+                # Take the best 2 x beam_size predictions. We'll choose the first
+                # beam_size of these which don't predict eos to continue with.
+                beam_size * 2,
+                lprobs.view(bsz, -1).size(1) - 1,  # -1 so we never select pad
+            ),
+        )
+        scores_buf = top_prediction[0]
+        indices_buf = top_prediction[1]
+        # Project back into relative indices and beams
+        beams_buf = torch.div(indices_buf, vocab_size, rounding_mode="trunc")
+        indices_buf = indices_buf.fmod(vocab_size)
+
+        # At this point, beams_buf and indices_buf are single-dim and contain relative indices
+        return scores_buf, indices_buf, beams_buf
+
+
+class LexicallyMaskedBeamSearch(Search):
+    def __init__(self, tgt_dict, lexical_allowmask):
+        super().__init__(tgt_dict)
+        self.constraint_states = None
+        self.lexical_allowmask = [
+            "-".join([f"{x:0>9}" for x in allowmask])
+            for allowmask in lexical_allowmask
+        ]
+
+    @torch.jit.export
+    def step(
+        self,
+        step: int,
+        lprobs,
+        scores: Optional[Tensor],
+        prev_output_tokens: Optional[Tensor] = None,
+        original_batch_idxs: Optional[Tensor] = None,
+    ):
+        bsz, beam_size, vocab_size = lprobs.size()
+
+        print("LBeamSearch step", step)
+        print(lprobs.shape, prev_output_tokens.shape, scores.shape)
+
+        length = prev_output_tokens.shape[1]
+
+        # TODO: prune every i-th step
+        if (step % 5 == 0) and step > 5:
+            # TODO: maybe this should happen at the end?
+            # TODO: be much smarter about speed here
+            for beam_tokens_i, beam_tokens in enumerate(prev_output_tokens):
+                coverage = [False] * beam_tokens.shape[0]
+                beam_tokens_str = "-".join(f"{x:0>9}" for x in beam_tokens)
+                # print(beam_tokens_str)
+                for single_allowmask in self.lexical_allowmask:
+                    # print("looking at", single_allowmask)
+                    indices_object = re.finditer(pattern=single_allowmask, string=beam_tokens_str)
+                    indices = [(index.start(), index.end()) for index in indices_object]
+                    for index_l, index_r in indices:
+                        # print(index_l//10, (index_r+1)//10)
+                        for i in range(index_l//10, (index_r+1)//10):
+                            coverage[i] = True
+                # TODO: change constant
+                # TODO: batch
+                scores[0][beam_tokens_i][-1] -= (len(coverage)- sum(coverage))*10
 
         if step == 0:
             # at the first step all hypotheses are equally likely, so use
@@ -584,8 +658,8 @@ class DiverseBeamSearch(Search):
 
         scores_G, indices_G, beams_G = [], [], []
         for g in range(self.num_groups):
-            lprobs_g = lprobs[:, g :: self.num_groups, :]
-            scores_g = scores[:, g :: self.num_groups, :] if step > 0 else None
+            lprobs_g = lprobs[:, g:: self.num_groups, :]
+            scores_g = scores[:, g:: self.num_groups, :] if step > 0 else None
 
             # apply diversity penalty
             if g > 0:

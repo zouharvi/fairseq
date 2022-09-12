@@ -363,6 +363,7 @@ class FairseqTask(object):
         seq_gen_cls=None,
         extra_gen_cls_kwargs=None,
         prefix_allowed_tokens_fn=None,
+        lexical_allowmask=[],
     ):
         """
         Build a :class:`~fairseq.SequenceGenerator` instance for this
@@ -388,6 +389,9 @@ class FairseqTask(object):
                 (https://arxiv.org/abs/2010.00904) and
                 https://github.com/facebookresearch/GENRE.
         """
+
+        print("-- BUILDING generator")
+
         if getattr(args, "score_reference", False):
             from fairseq.sequence_scorer import SequenceScorer
 
@@ -410,6 +414,7 @@ class FairseqTask(object):
         match_source_len = getattr(args, "match_source_len", False)
         diversity_rate = getattr(args, "diversity_rate", -1)
         constrained = getattr(args, "constraints", False)
+
         if prefix_allowed_tokens_fn is None:
             prefix_allowed_tokens_fn = getattr(args, "prefix_allowed_tokens_fn", None)
         if (
@@ -458,6 +463,10 @@ class FairseqTask(object):
         elif prefix_allowed_tokens_fn:
             search_strategy = search.PrefixConstrainedBeamSearch(
                 self.target_dictionary, prefix_allowed_tokens_fn
+            )
+        elif len(lexical_allowmask) > 1:
+            search_strategy = search.LexicallyMaskedBeamSearch(
+                self.target_dictionary, lexical_allowmask
             )
         else:
             search_strategy = search.BeamSearch(self.target_dictionary)

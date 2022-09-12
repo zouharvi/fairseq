@@ -113,6 +113,8 @@ class SequenceGenerator(nn.Module):
 
         assert temperature > 0, "--temperature must be greater than 0"
 
+        print("--- SETTING search object")
+
         self.search = (
             search.BeamSearch(tgt_dict) if search_strategy is None else search_strategy
         )
