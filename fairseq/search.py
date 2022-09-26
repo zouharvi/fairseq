@@ -146,7 +146,7 @@ class BeamSearch(Search):
 
 
 class LexicallyMaskedBeamSearch(Search):
-    def __init__(self, tgt_dict, lexical_allowmask):
+    def __init__(self, tgt_dict, lexical_allowmask, coefficient, strategy, step_subtract_frequency):
         super().__init__(tgt_dict)
         self.constraint_states = None
         lexical_allowmask = [
@@ -156,6 +156,9 @@ class LexicallyMaskedBeamSearch(Search):
         # this is non-ideal because we're disallowing overlapping matches but much much faster
         # TODO: find a hack around this
         self.lexical_allowmask_regex = "(" + "|".join(lexical_allowmask) + ")"
+        self.coefficient = coefficient
+        self.strategy = strategy
+        self.step_subtract_frequency = step_subtract_frequency
 
     @torch.jit.export
     def step(
@@ -173,8 +176,8 @@ class LexicallyMaskedBeamSearch(Search):
 
         length = prev_output_tokens.shape[1]
 
-        # TODO: prune every i-th step and not at the beginning
-        if (step % 6 == 0) and step > 5:
+        # TODO: step was originally > 5 and it worked well
+        if (step % self.step_subtract_frequency == 0) and step > 5:
             # TODO: maybe this should happen at the end?
             # TODO: Be much smarter about speed here. If something has already been covered, it will remain that way also in the future.
             for beam_tokens_i, beam_tokens in enumerate(prev_output_tokens):
@@ -189,7 +192,15 @@ class LexicallyMaskedBeamSearch(Search):
                         coverage[i] = True
                 # TODO: change constant
                 # TODO: handle batch
-                scores[0][beam_tokens_i][-1] -= (len(coverage)- sum(coverage))*5
+                # print(scores[0][beam_tokens_i][-1])
+                if self.strategy == "ratio":
+                    # percentage of uncovered tokens
+                    scores[0][beam_tokens_i][-1] -= (1 - sum(coverage) / len(coverage))*self.coefficient
+                elif self.strategy == "linear":
+                    # how much is left uncovered
+                    scores[0][beam_tokens_i][-1] -= (len(coverage) - sum(coverage))*self.coefficient
+                else:
+                    raise Exception(f"Unknown strategy {self.strategy}")
 
         if step == 0:
             # at the first step all hypotheses are equally likely, so use

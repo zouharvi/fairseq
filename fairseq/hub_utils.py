@@ -181,6 +181,9 @@ class GeneratorHubInterface(nn.Module):
         beam: int = 5,
         verbose: bool = False,
         lexical_allowmask={},
+        coefficient=0.0,
+        strategy=None,
+        step_subtract_frequency=1,
         skip_invalid_size_inputs=False,
         inference_step_args=None,
         prefix_allowed_tokens_fn=None,
@@ -191,7 +194,7 @@ class GeneratorHubInterface(nn.Module):
                 tokenized_sentences.unsqueeze(0), beam=beam, verbose=verbose, **kwargs
             )[0]
 
-        print("- HUBUTILS GENERATE")
+        # print("- HUBUTILS GENERATE")
         # build generator using current args as well as any kwargs
         gen_args = copy.deepcopy(self.cfg.generation)
         with open_dict(gen_args):
@@ -203,6 +206,9 @@ class GeneratorHubInterface(nn.Module):
             gen_args,
             prefix_allowed_tokens_fn=prefix_allowed_tokens_fn,
             lexical_allowmask=lexical_allowmask,
+            coefficient=coefficient,
+            strategy=strategy,
+            step_subtract_frequency=step_subtract_frequency,
         )
 
         inference_step_args = inference_step_args or {}
